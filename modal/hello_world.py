@@ -12,28 +12,20 @@ import modal
 
 app = modal.App("example-hello-world")
 
+image = modal.Image.debian_slim(python_version="3.11").pip_install("dagster-pipes")
 
-@app.function()
-def f(i):
-    if i % 2 == 0:
-        print("hello", i)
-    else:
-        print("world", i, file=sys.stderr)
-    return i * i
 
+
+@app.function(image=image)
+def f(identifier):
+    print(identifier)
 
 
 @app.local_entrypoint()
 def main():
-    # run the function locally
-    print(f.local(1000))
+    from dagster_pipes import PipesContext, open_dagster_pipes
 
-    # run the function remotely on Modal
-    print(f.remote(1000))
-
-    # run the function in parallel and remotely on Modal
-    total = 0
-    for ret in f.map(range(5)):
-        total += ret
-
-    print(total)
+    with open_dagster_pipes():
+        context = PipesContext.get()
+        context.log.info(f"Processing static partition {context.partition_key}")
+        f.remote(context.partition_key)
