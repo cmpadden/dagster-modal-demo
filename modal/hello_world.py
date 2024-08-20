@@ -5,18 +5,13 @@ USAGE
 
 """
 
-import sys
-
 import modal
 
 
 app = modal.App("example-hello-world")
 
-image = modal.Image.debian_slim(python_version="3.11").pip_install("dagster-pipes")
 
-
-
-@app.function(image=image)
+@app.function()
 def f(identifier):
     print(identifier)
 

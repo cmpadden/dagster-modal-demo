@@ -1,5 +1,3 @@
-import shutil
-
 from pathlib import Path
 from dagster import (
     AssetExecutionContext,
@@ -10,14 +8,14 @@ from dagster import (
 )
 
 
+
 # TODO - introduce `ModalProject`
+# TODO - create custom PipesSubprocessClient -- ModalSubprocessClient
 
-oceans_partitions_def = StaticPartitionsDefinition(
-    ["arctic", "atlantic", "indian", "pacific", "southern"]
-)
+colors_partitions_def = StaticPartitionsDefinition(["red", "yellow", "blue"])
 
 
-@asset(partitions_def=oceans_partitions_def)
+@asset(partitions_def=colors_partitions_def, compute_kind="modal")
 def subprocess_asset(
     context: AssetExecutionContext, pipes_subprocess_client: PipesSubprocessClient
 ) -> MaterializeResult:
