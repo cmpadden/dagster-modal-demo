@@ -1,7 +1,7 @@
-from dagster import PipesSubprocessClient
 from pathlib import Path
 from typing import Mapping, Optional, Union
-from dagster import OpExecutionContext
+
+from dagster import OpExecutionContext, PipesSubprocessClient
 from dagster._annotations import public
 from dagster._core.pipes.client import PipesClientCompletedInvocation
 from dagster_pipes import PipesExtras

@@ -7,7 +7,6 @@ USAGE
 
 import modal
 
-
 app = modal.App("example-hello-world")
 
 

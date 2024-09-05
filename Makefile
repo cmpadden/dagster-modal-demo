@@ -1,5 +1,5 @@
 ruff:
-	ruff check --fix .
+	ruff check --select I --fix .
 
 clean:
 	find . -name "__pycache__" -exec rm -rf {} +
