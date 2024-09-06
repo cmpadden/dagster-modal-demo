@@ -5,7 +5,7 @@
 Orchestrate your flexible compute workloads with the combined forces of Dagster and Modal.
 
 In this example project we show how you can write a pipeline that automatically detects newly
-published podcasts, transcribes them using the power of GPUs, and notifies you of the summary so
+published podcasts, transcribes them using the power of GPUs, and notifies you with the summary so
 that you can focus on the things that truly matter (not listening to people talk into fancy
 microphones).
 
