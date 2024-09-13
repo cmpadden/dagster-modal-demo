@@ -1,7 +1,6 @@
 import re
 import urllib.request
 from dataclasses import dataclass
-
 from typing import Optional
 
 import dagster as dg
@@ -65,7 +64,7 @@ def sanitize(text: str, lower: bool = True) -> str:
         sanitized text
 
     """
-    text = re.sub(r"[^a-zA-Z\d]", "_", feed.feed.title)
+    text = re.sub(r"[^a-zA-Z\d]", "_", text)
     text = re.sub(r"_+", "_", text)
     if lower:
         text = text.lower()
@@ -81,33 +80,90 @@ Task List
 
 """
 
+DEFAULT_POLLING_INTERVAL = 10 * 60  # 10 minutes
+
+
+podcast_partitions_def = dg.DynamicPartitionsDefinition(name="podcast_id")
+
+
+# @dg.asset(partitions_def=podcast_partitions_def)
+# def podcast_metadata(context: dg.AssetExecutionContext):
+#     context.log.info("metadata %s", context.partition_key)
+#
+#
+# @dg.asset(partitions_def=podcast_partitions_def, deps=[podcast_metadata])
+# def podcast_audio_file(context: dg.AssetExecutionContext):
+#     context.log.info("audio %s", context.partition_key)
+#
+#
+# @dg.asset(partitions_def=podcast_partitions_def, deps=[podcast_audio_file])
+# def podcast_transcription(context: dg.AssetExecutionContext):
+#     context.log.info("transcript %s", context.partition_key)
+#
+#
+# podcast_transcription_job = dg.define_asset_job(
+#     name="podcast_transcription_job",
+#     selection=dg.AssetSelection.assets(
+#         podcast_metadata, podcast_audio_file, podcast_transcription
+#     ),
+#     partitions_def=podcast_partitions_def,
+# )
+
 
 @dataclass
 class RSSFeedDefinition:
     name: str
     url: str
+    max_backfill_size: int = 3
 
 
-def rss_sensor_factory(feed_definition: RSSFeedDefinition) -> dg.SensorDefinition:
+def rss_pipeline_factory(feed_definition: RSSFeedDefinition) -> dg.Definitions:
+    @dg.asset(
+        name=f"{feed_definition.name}_metadata", partitions_def=podcast_partitions_def
+    )
+    def _podcast_metadata(context: dg.AssetExecutionContext) -> dg.MaterializeResult:
+        return dg.MaterializeResult(metadata={"size": 0})
+
+    job_name = f"{feed_definition.name}_job"
+    _job = dg.define_asset_job(
+        name=job_name,
+        selection=dg.AssetSelection.assets(_podcast_metadata),
+        partitions_def=podcast_partitions_def,
+    )
+
     @dg.sensor(
         name=f"rss_sensor_{feed_definition.name}",
-        minimum_interval_seconds=10 * 60,  # 10-minutes
+        minimum_interval_seconds=DEFAULT_POLLING_INTERVAL,
         default_status=dg.DefaultSensorStatus.RUNNING,
+        job=_job,
     )
     def _sensor(context: dg.SensorEvaluationContext):
         etag = context.cursor
         context.log.info("querying feed with cursor etag: %s", etag)
         feed = feedparser.parse(feed_definition.url, etag=etag)
 
-        context.log.info("feed entries: %s", len(feed.entries))
-        context.log.info("feed last updated: %s", getattr(feed, "modified", None))
+        num_entries = len(feed.entries)
+        context.log.info("total number of entries: %s", num_entries)
 
-        # TODO - launch run requests
+        if num_entries > feed_definition.max_backfill_size:
+            context.log.info(
+                "truncating entries to %s", feed_definition.max_backfill_size
+            )
+            entries = feed.entries[: feed_definition.max_backfill_size]
+        else:
+            entries = feed.entries
 
-        context.log.info("updating feed cursor etag: %s", feed.etag)
-        context.update_cursor(feed.etag)
+        partition_keys = [sanitize(entry.id) for entry in entries]
 
-    return _sensor
+        return dg.SensorResult(
+            run_requests=[dg.RunRequest(partition_key=key) for key in partition_keys],
+            dynamic_partitions_requests=[
+                podcast_partitions_def.build_add_request(partition_keys)
+            ],
+            cursor=feed.etag,
+        )
+
+    return dg.Definitions(assets=[_podcast_metadata], jobs=[_job], sensors=[_sensor])
 
 
 feeds = [
@@ -117,6 +173,6 @@ feeds = [
     )
 ]
 
-feed_sensors = [rss_sensor_factory(feed) for feed in feeds]
+pipeline_definitions = [rss_pipeline_factory(feed) for feed in feeds]
 
-defs = dg.Definitions(sensors=[*feed_sensors])
+defs = dg.Definitions.merge(*pipeline_definitions)
