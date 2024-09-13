@@ -1,4 +1,5 @@
 *.egg-info/*
+*.mp3
 *.pyc
 .direnv/
 .envrc

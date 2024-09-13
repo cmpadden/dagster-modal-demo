@@ -1,3 +1,4 @@
+import os
 import re
 import urllib.request
 from dataclasses import dataclass
@@ -83,33 +84,6 @@ Task List
 DEFAULT_POLLING_INTERVAL = 10 * 60  # 10 minutes
 
 
-podcast_partitions_def = dg.DynamicPartitionsDefinition(name="podcast_id")
-
-
-# @dg.asset(partitions_def=podcast_partitions_def)
-# def podcast_metadata(context: dg.AssetExecutionContext):
-#     context.log.info("metadata %s", context.partition_key)
-#
-#
-# @dg.asset(partitions_def=podcast_partitions_def, deps=[podcast_metadata])
-# def podcast_audio_file(context: dg.AssetExecutionContext):
-#     context.log.info("audio %s", context.partition_key)
-#
-#
-# @dg.asset(partitions_def=podcast_partitions_def, deps=[podcast_audio_file])
-# def podcast_transcription(context: dg.AssetExecutionContext):
-#     context.log.info("transcript %s", context.partition_key)
-#
-#
-# podcast_transcription_job = dg.define_asset_job(
-#     name="podcast_transcription_job",
-#     selection=dg.AssetSelection.assets(
-#         podcast_metadata, podcast_audio_file, podcast_transcription
-#     ),
-#     partitions_def=podcast_partitions_def,
-# )
-
-
 @dataclass
 class RSSFeedDefinition:
     name: str
@@ -118,17 +92,48 @@ class RSSFeedDefinition:
 
 
 def rss_pipeline_factory(feed_definition: RSSFeedDefinition) -> dg.Definitions:
-    @dg.asset(
-        name=f"{feed_definition.name}_metadata", partitions_def=podcast_partitions_def
+    rss_entry_partition = dg.DynamicPartitionsDefinition(
+        name=f"{feed_definition.name}_entry"
     )
-    def _podcast_metadata(context: dg.AssetExecutionContext) -> dg.MaterializeResult:
-        return dg.MaterializeResult(metadata={"size": 0})
+
+    class AudioRunConfig(dg.Config):
+        audio_file_url: str
+
+    audio_asset_name = f"{feed_definition.name}_audio"
+
+    @dg.asset(
+        name=audio_asset_name,
+        partitions_def=rss_entry_partition,
+    )
+    def _podcast_audio(context: dg.AssetExecutionContext, config: AudioRunConfig):
+        context.log.info("downloading audio file %s", config.audio_file_url)
+        destination = context.partition_key + ".mp3"
+        if os.path.exists(destination):
+            context.log.info("audio file already exists... skipping")
+        else:
+            bytes = download_bytes(config.audio_file_url)
+            store_bytes(bytes, destination)
+        return dg.MaterializeResult(
+            metadata={
+                "destination": destination
+                # TODO - waveform
+                # TODO - file size
+            }
+        )
+
+    @dg.asset(
+        name=f"{feed_definition.name}_transcript",
+        partitions_def=rss_entry_partition,
+        deps=[_podcast_audio],
+    )
+    def _podcast_transcription(context: dg.AssetExecutionContext):
+        context.log.info("transcript %s", context.partition_key)
 
     job_name = f"{feed_definition.name}_job"
     _job = dg.define_asset_job(
         name=job_name,
-        selection=dg.AssetSelection.assets(_podcast_metadata),
-        partitions_def=podcast_partitions_def,
+        selection=dg.AssetSelection.assets(_podcast_audio, _podcast_transcription),
+        partitions_def=rss_entry_partition,
     )
 
     @dg.sensor(
@@ -153,17 +158,45 @@ def rss_pipeline_factory(feed_definition: RSSFeedDefinition) -> dg.Definitions:
         else:
             entries = feed.entries
 
+        # TODO - redundant
         partition_keys = [sanitize(entry.id) for entry in entries]
 
+        def _extract_audio_url(entry):
+            audio_hrefs = [
+                link.get("href")
+                for link in entry.links
+                if link.get("type") == "audio/mpeg"
+            ]
+            if audio_hrefs:
+                return audio_hrefs[0]
+            else:
+                raise Exception("No audio file present")
+
         return dg.SensorResult(
-            run_requests=[dg.RunRequest(partition_key=key) for key in partition_keys],
+            run_requests=[
+                dg.RunRequest(
+                    partition_key=sanitize(entry.id),
+                    run_config=dg.RunConfig(
+                        ops={
+                            audio_asset_name: AudioRunConfig(
+                                audio_file_url=_extract_audio_url(entry)
+                            )
+                        }
+                    ),
+                )
+                for entry in entries
+            ],
             dynamic_partitions_requests=[
-                podcast_partitions_def.build_add_request(partition_keys)
+                rss_entry_partition.build_add_request(partition_keys)
             ],
             cursor=feed.etag,
         )
 
-    return dg.Definitions(assets=[_podcast_metadata], jobs=[_job], sensors=[_sensor])
+    return dg.Definitions(
+        assets=[_podcast_audio, _podcast_transcription],
+        jobs=[_job],
+        sensors=[_sensor],
+    )
 
 
 feeds = [
