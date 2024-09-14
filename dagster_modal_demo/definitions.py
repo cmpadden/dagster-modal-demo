@@ -90,7 +90,27 @@ def file_size(len_bytes, suffix="B") -> str:
     return "%.1f%s%s" % (len_bytes, "Yi", suffix)
 
 
+def _extract_audio_url(entry) -> str:
+    """Extracts URL of audio file from RSS entry.
+
+    Args:
+        entry: metadata of RSS entry from `feedparser`
+
+    Returns:
+        URL of audio file
+
+    """
+    audio_hrefs = [
+        link.get("href") for link in entry.links if link.get("type") == "audio/mpeg"
+    ]
+    if audio_hrefs:
+        return audio_hrefs[0]
+    else:
+        raise Exception("No audio file present")
+
+
 DEFAULT_POLLING_INTERVAL = 10 * 60  # 10 minutes
+DATA_PATH = "./data"
 
 
 @dataclass
@@ -113,10 +133,11 @@ def rss_pipeline_factory(feed_definition: RSSFeedDefinition) -> dg.Definitions:
     @dg.asset(
         name=audio_asset_name,
         partitions_def=rss_entry_partition,
+        compute_kind="python",
     )
     def _podcast_audio(context: dg.AssetExecutionContext, config: AudioRunConfig):
         context.log.info("downloading audio file %s", config.audio_file_url)
-        destination = context.partition_key + ".mp3"
+        destination = DATA_PATH + os.linesep + context.partition_key + ".mp3"
         if os.path.exists(destination):
             context.log.info("audio file already exists... skipping")
             with open(destination, "rb") as f:
@@ -131,6 +152,9 @@ def rss_pipeline_factory(feed_definition: RSSFeedDefinition) -> dg.Definitions:
                 # TODO - waveform
             }
         )
+
+    # TODO - modal mount filesystem and transcribe
+    # TODO - consider uploading file to R2 durable storage
 
     @dg.asset(
         name=f"{feed_definition.name}_transcript",
@@ -169,36 +193,28 @@ def rss_pipeline_factory(feed_definition: RSSFeedDefinition) -> dg.Definitions:
         else:
             entries = feed.entries
 
-        # TODO - redundant
-        partition_keys = [sanitize(entry.id) for entry in entries]
-
-        def _extract_audio_url(entry):
-            audio_hrefs = [
-                link.get("href")
-                for link in entry.links
-                if link.get("type") == "audio/mpeg"
-            ]
-            if audio_hrefs:
-                return audio_hrefs[0]
-            else:
-                raise Exception("No audio file present")
+        partition_key_audio_files = [
+            (sanitize(entry.id), _extract_audio_url(entry)) for entry in entries
+        ]
 
         return dg.SensorResult(
             run_requests=[
                 dg.RunRequest(
-                    partition_key=sanitize(entry.id),
+                    partition_key=partition_key,
                     run_config=dg.RunConfig(
                         ops={
                             audio_asset_name: AudioRunConfig(
-                                audio_file_url=_extract_audio_url(entry)
+                                audio_file_url=audio_file_url
                             )
                         }
                     ),
                 )
-                for entry in entries
+                for (partition_key, audio_file_url) in partition_key_audio_files
             ],
             dynamic_partitions_requests=[
-                rss_entry_partition.build_add_request(partition_keys)
+                rss_entry_partition.build_add_request(
+                    [key for (key, _) in partition_key_audio_files]
+                )
             ],
             cursor=feed.etag,
         )
