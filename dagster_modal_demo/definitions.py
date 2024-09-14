@@ -72,14 +72,23 @@ def sanitize(text: str, lower: bool = True) -> str:
     return text
 
 
-"""
+def file_size(len_bytes, suffix="B") -> str:
+    """Human-readable bytes size
 
-Task List
-- [ ] Limit results of feed using `modified`
-- [ ] Create sensor that gets latest podcasts (for podcasts in YAML file?)
-- [ ] Create data class for podcast feed
+    Args:
+        len_bytes (int): number of bytes
+        suffix (str): optional suffix
 
-"""
+    Returns:
+        String representation of bytes size
+
+    """
+    for unit in ["", "Ki", "Mi", "Gi", "Ti", "Pi", "Ei", "Zi"]:
+        if abs(len_bytes) < 1024.0:
+            return "%3.1f%s%s" % (len_bytes, unit, suffix)
+        len_bytes /= 1024.0
+    return "%.1f%s%s" % (len_bytes, "Yi", suffix)
+
 
 DEFAULT_POLLING_INTERVAL = 10 * 60  # 10 minutes
 
@@ -110,14 +119,16 @@ def rss_pipeline_factory(feed_definition: RSSFeedDefinition) -> dg.Definitions:
         destination = context.partition_key + ".mp3"
         if os.path.exists(destination):
             context.log.info("audio file already exists... skipping")
+            with open(destination, "rb") as f:
+                bytes = f.read()
         else:
             bytes = download_bytes(config.audio_file_url)
             store_bytes(bytes, destination)
         return dg.MaterializeResult(
             metadata={
-                "destination": destination
+                "destination": destination,
+                "size": file_size(len(bytes)),
                 # TODO - waveform
-                # TODO - file size
             }
         )
 
