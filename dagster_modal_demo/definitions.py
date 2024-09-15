@@ -6,6 +6,7 @@ from typing import Optional
 
 import dagster as dg
 import feedparser
+from dagster_aws.s3 import S3Resource
 
 BROWSER_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/89.0.4389.82 Safari/537.36"
 
@@ -110,7 +111,16 @@ def _extract_audio_url(entry) -> str:
 
 
 DEFAULT_POLLING_INTERVAL = 10 * 60  # 10 minutes
-DATA_PATH = "./data"
+DATA_PATH = "data"
+
+from botocore.client import Config
+
+s3_resource = S3Resource(
+    endpoint_url=dg.EnvVar("CLOUDFLARE_R2_API"),
+    aws_access_key_id=dg.EnvVar("CLOUDFLARE_R2_ACCESS_KEY_ID"),
+    aws_secret_access_key=dg.EnvVar("CLOUDFLARE_R2_SECRET_ACCESS_KEY"),
+    region_name="auto",
+)
 
 
 @dataclass
@@ -135,9 +145,13 @@ def rss_pipeline_factory(feed_definition: RSSFeedDefinition) -> dg.Definitions:
         partitions_def=rss_entry_partition,
         compute_kind="python",
     )
-    def _podcast_audio(context: dg.AssetExecutionContext, config: AudioRunConfig):
+    def _podcast_audio(
+        context: dg.AssetExecutionContext, config: AudioRunConfig, s3: S3Resource
+    ):
         context.log.info("downloading audio file %s", config.audio_file_url)
-        destination = DATA_PATH + os.linesep + context.partition_key + ".mp3"
+        destination = DATA_PATH + os.sep + context.partition_key + ".mp3"
+
+        # TODO - check if file exists in R2
         if os.path.exists(destination):
             context.log.info("audio file already exists... skipping")
             with open(destination, "rb") as f:
@@ -145,6 +159,11 @@ def rss_pipeline_factory(feed_definition: RSSFeedDefinition) -> dg.Definitions:
         else:
             bytes = download_bytes(config.audio_file_url)
             store_bytes(bytes, destination)
+
+        s3.get_client().put_object(
+            Body=bytes, Bucket="dagster-modal-demo", Key=destination
+        )
+
         return dg.MaterializeResult(
             metadata={
                 "destination": destination,
@@ -153,8 +172,6 @@ def rss_pipeline_factory(feed_definition: RSSFeedDefinition) -> dg.Definitions:
             }
         )
 
-    # TODO - modal mount filesystem and transcribe
-    # TODO - consider uploading file to R2 durable storage
 
     @dg.asset(
         name=f"{feed_definition.name}_transcript",
@@ -223,6 +240,7 @@ def rss_pipeline_factory(feed_definition: RSSFeedDefinition) -> dg.Definitions:
         assets=[_podcast_audio, _podcast_transcription],
         jobs=[_job],
         sensors=[_sensor],
+        resources={"s3": s3_resource},
     )
 
 

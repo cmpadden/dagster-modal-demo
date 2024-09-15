@@ -5,3 +5,4 @@
 .envrc
 __pycache__/
 tmp*/
+.env
