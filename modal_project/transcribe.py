@@ -17,17 +17,12 @@ from pathlib import Path
 from typing import Iterator, Tuple, TypedDict
 
 import modal
-from dotenv import load_dotenv
 
 from . import config
 
 Segment = TypedDict("Segment", {"text": str, "start": float, "end": float})
 
 logger = config.get_logger(__name__)
-
-
-# TODO - remove if used from Dagster
-load_dotenv()
 
 
 def coalesce_short_transcript_segments(
@@ -240,13 +235,21 @@ def transcribe_episode(
 
 @app.local_entrypoint()
 def main():
-    # TODO - get podcast from Dagster context
+    from dagster_pipes import PipesContext, open_dagster_pipes
+
     model = config.DEFAULT_MODEL
 
-    f = "/mount/dagster-modal-demo/data/changelog_com_7_2546.mp3"
-    r = f.replace(".mp3", ".txt")
-    transcribe_episode.remote(
-        audio_filepath=Path(f),
-        result_path=Path(r),
-        model=model,
-    )
+    with open_dagster_pipes():
+        context = PipesContext.get()
+
+        audio_file = context.extras.get("audio_file_path")
+        if not audio_file:
+            raise Exception("Missing `audio_file_path` extras parameter")
+
+        audio_file = "/mount/dagster-modal-demo/" + audio_file
+        result = audio_file.replace(".mp3", ".txt")
+        transcribe_episode.remote(
+            audio_filepath=Path(audio_file),
+            result_path=Path(result),
+            model=model,
+        )

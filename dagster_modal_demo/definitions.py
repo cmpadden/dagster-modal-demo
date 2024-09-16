@@ -2,12 +2,15 @@ import os
 import re
 import urllib.request
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 import dagster as dg
 import feedparser
 from botocore.exceptions import ClientError
 from dagster_aws.s3 import S3Resource
+
+from dagster_modal_demo.dagster_modal.resources import ModalClient
 
 BROWSER_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/89.0.4389.82 Safari/537.36"
 
@@ -140,6 +143,10 @@ class RSSFeedDefinition:
     max_backfill_size: int = 3
 
 
+def _destination(partition_key: str) -> str:
+    return DATA_PATH + os.sep + partition_key + ".mp3"
+
+
 def rss_pipeline_factory(feed_definition: RSSFeedDefinition) -> dg.Definitions:
     rss_entry_partition = dg.DynamicPartitionsDefinition(
         name=f"{feed_definition.name}_entry"
@@ -159,17 +166,17 @@ def rss_pipeline_factory(feed_definition: RSSFeedDefinition) -> dg.Definitions:
         context: dg.AssetExecutionContext, config: AudioRunConfig, s3: S3Resource
     ):
         context.log.info("downloading audio file %s", config.audio_file_url)
-        destination = DATA_PATH + os.sep + context.partition_key + ".mp3"
+        audio_file_path = _destination(context.partition_key)
 
         metadata = {}
 
-        if _object_exists(s3.get_client(), bucket=R2_BUCKET_NAME, key=destination):
+        if _object_exists(s3.get_client(), bucket=R2_BUCKET_NAME, key=audio_file_path):
             context.log.info("audio file already exists... skipping")
             metadata["status"] = "cached"
         else:
             bytes = download_bytes(config.audio_file_url)
             s3.get_client().put_object(
-                Body=bytes, Bucket=R2_BUCKET_NAME, Key=destination
+                Body=bytes, Bucket=R2_BUCKET_NAME, Key=audio_file_path
             )
             metadata["status"] = "uploaded"
             metadata["size"] = file_size(len(bytes))
@@ -180,9 +187,25 @@ def rss_pipeline_factory(feed_definition: RSSFeedDefinition) -> dg.Definitions:
         name=f"{feed_definition.name}_transcript",
         partitions_def=rss_entry_partition,
         deps=[_podcast_audio],
+        compute_kind="modal",
     )
-    def _podcast_transcription(context: dg.AssetExecutionContext):
+    def _podcast_transcription(context: dg.AssetExecutionContext, modal: ModalClient):
         context.log.info("transcript %s", context.partition_key)
+        audio_file_path = _destination(context.partition_key)
+
+        vars = [
+            "CLOUDFLARE_R2_API",
+            "CLOUDFLARE_R2_ACCESS_KEY_ID",
+            "CLOUDFLARE_R2_SECRET_ACCESS_KEY",
+        ]
+        env = {k: v for k, v in os.environ.items() if k in vars}
+
+        return modal.run(
+            func_ref="modal_project.transcribe",
+            context=context,
+            env=env,
+            extras={"audio_file_path": audio_file_path},
+        ).get_materialize_result()
 
     job_name = f"{feed_definition.name}_job"
     _job = dg.define_asset_job(
@@ -243,7 +266,12 @@ def rss_pipeline_factory(feed_definition: RSSFeedDefinition) -> dg.Definitions:
         assets=[_podcast_audio, _podcast_transcription],
         jobs=[_job],
         sensors=[_sensor],
-        resources={"s3": s3_resource},
+        resources={
+            "s3": s3_resource,
+            "modal": ModalClient(
+                project_directory=Path(__file__).parent.parent
+            ),
+        },
     )
 
 
