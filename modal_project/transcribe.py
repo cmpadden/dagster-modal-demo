@@ -242,8 +242,11 @@ def transcribe_episode(
 def main():
     # TODO - get podcast from Dagster context
     model = config.DEFAULT_MODEL
+
+    f = "/mount/dagster-modal-demo/data/changelog_com_7_2546.mp3"
+    r = f.replace(".mp3", ".txt")
     transcribe_episode.remote(
-        audio_filepath=Path("/mount/data/changelog_com_7_2546.mp3"),
-        result_path=Path("/mount/transcripts/changelog_com_7_2546.txt"),
+        audio_filepath=Path(f),
+        result_path=Path(r),
         model=model,
     )
