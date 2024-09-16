@@ -6,6 +6,7 @@ from typing import Optional
 
 import dagster as dg
 import feedparser
+from botocore.exceptions import ClientError
 from dagster_aws.s3 import S3Resource
 
 BROWSER_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/89.0.4389.82 Safari/537.36"
@@ -123,6 +124,17 @@ s3_resource = S3Resource(
 )
 
 
+def _object_exists(s3, bucket: str, key: str):
+    try:
+        s3.head_object(Bucket=bucket, Key=key)
+        return True
+    except ClientError:
+        return False
+
+
+R2_BUCKET_NAME = "dagster-modal-demo"
+
+
 @dataclass
 class RSSFeedDefinition:
     name: str
@@ -151,27 +163,20 @@ def rss_pipeline_factory(feed_definition: RSSFeedDefinition) -> dg.Definitions:
         context.log.info("downloading audio file %s", config.audio_file_url)
         destination = DATA_PATH + os.sep + context.partition_key + ".mp3"
 
-        # TODO - check if file exists in R2
-        if os.path.exists(destination):
+        metadata = {}
+
+        if _object_exists(s3.get_client(), bucket=R2_BUCKET_NAME, key=destination):
             context.log.info("audio file already exists... skipping")
-            with open(destination, "rb") as f:
-                bytes = f.read()
+            metadata["status"] = "cached"
         else:
             bytes = download_bytes(config.audio_file_url)
-            store_bytes(bytes, destination)
+            s3.get_client().put_object(
+                Body=bytes, Bucket=R2_BUCKET_NAME, Key=destination
+            )
+            metadata["status"] = "uploaded"
+            metadata["size"] = file_size(len(bytes))
 
-        s3.get_client().put_object(
-            Body=bytes, Bucket="dagster-modal-demo", Key=destination
-        )
-
-        return dg.MaterializeResult(
-            metadata={
-                "destination": destination,
-                "size": file_size(len(bytes)),
-                # TODO - waveform
-            }
-        )
-
+        return dg.MaterializeResult(metadata=metadata)
 
     @dg.asset(
         name=f"{feed_definition.name}_transcript",

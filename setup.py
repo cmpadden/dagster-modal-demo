@@ -5,6 +5,7 @@ setup(
     packages=find_packages(exclude=["dagster_modal_demo_tests"]),
     install_requires=[
         "dagster",
+        "dagster-aws",
         "dagster-cloud",
         "feedparser",
     ],
