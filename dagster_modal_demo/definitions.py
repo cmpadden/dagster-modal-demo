@@ -114,8 +114,6 @@ def _extract_audio_url(entry) -> str:
 DEFAULT_POLLING_INTERVAL = 10 * 60  # 10 minutes
 DATA_PATH = "data"
 
-from botocore.client import Config
-
 s3_resource = S3Resource(
     endpoint_url=dg.EnvVar("CLOUDFLARE_R2_API"),
     aws_access_key_id=dg.EnvVar("CLOUDFLARE_R2_ACCESS_KEY_ID"),

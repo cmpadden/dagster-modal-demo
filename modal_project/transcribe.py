@@ -11,17 +11,23 @@ REFERENCES
 """
 
 import json
+import os
 import pathlib
 from pathlib import Path
 from typing import Iterator, Tuple, TypedDict
 
 import modal
+from dotenv import load_dotenv
 
 from . import config
 
 Segment = TypedDict("Segment", {"text": str, "start": float, "end": float})
 
 logger = config.get_logger(__name__)
+
+
+# TODO - remove if used from Dagster
+load_dotenv()
 
 
 def coalesce_short_transcript_segments(
@@ -64,6 +70,7 @@ app_image = (
         "pandas",
         "loguru==0.6.0",
         "torchaudio==2.1.0",
+        "python-dotenv",
     )
     .apt_install("ffmpeg")
     .pip_install("ffmpeg-python")
@@ -72,6 +79,18 @@ app_image = (
 app = modal.App(
     "whisper-pod-transcriber",
     image=app_image,
+)
+
+cloud_bucket_mount = modal.CloudBucketMount(
+    "dagster-modal-demo",
+    bucket_endpoint_url=os.environ.get("CLOUDFLARE_R2_API"),
+    secret=modal.Secret.from_dict(
+        {
+            "AWS_ACCESS_KEY_ID": os.environ.get("CLOUDFLARE_R2_ACCESS_KEY_ID"),
+            "AWS_SECRET_ACCESS_KEY": os.environ.get("CLOUDFLARE_R2_SECRET_ACCESS_KEY"),
+            "AWS_REGION": "auto",
+        }
+    ),
 )
 
 
@@ -134,7 +153,9 @@ def split_silences(
     image=app_image,
     cpu=2,
     timeout=400,
-    mounts=[modal.Mount.from_local_dir("./data", remote_path="/mount")],
+    volumes={
+        "/mount": cloud_bucket_mount,
+    },
 )
 def transcribe_segment(
     start: float,
@@ -181,13 +202,20 @@ def transcribe_segment(
 @app.function(
     image=app_image,
     timeout=900,
-    mounts=[modal.Mount.from_local_dir("./data", remote_path="/mount")],
+    volumes={
+        "/mount": cloud_bucket_mount,
+    },
 )
 def transcribe_episode(
     audio_filepath: pathlib.Path,
     result_path: pathlib.Path,
     model: config.ModelSpec,
+    force: bool = False,
 ):
+    if os.path.exists(result_path) and not force:
+        logger.info("Transcript already exists, skipping...")
+        return
+
     segment_gen = split_silences(str(audio_filepath))
 
     output_text = ""
@@ -198,6 +226,7 @@ def transcribe_episode(
         output_text += result["text"]
         output_segments += result["segments"]
 
+    # TODO - emit metadata
     result = {
         "text": output_text,
         "segments": output_segments,
@@ -211,10 +240,10 @@ def transcribe_episode(
 
 @app.local_entrypoint()
 def main():
-    # TODO - iterate over podcasts
+    # TODO - get podcast from Dagster context
     model = config.DEFAULT_MODEL
     transcribe_episode.remote(
-        audio_filepath=Path("/mount/changelog_com_7_2546.mp3"),
-        result_path=Path("/mount/changelog_com_7_2546.txt"),
+        audio_filepath=Path("/mount/data/changelog_com_7_2546.mp3"),
+        result_path=Path("/mount/transcripts/changelog_com_7_2546.txt"),
         model=model,
     )
