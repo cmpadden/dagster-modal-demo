@@ -16,7 +16,6 @@ from typing import List, Optional, Tuple
 
 import tiktoken
 from openai import OpenAI
-from tqdm import tqdm
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
@@ -135,7 +134,7 @@ def summarize(
         system_message_content += f"\n\n{additional_instructions}"
 
     accumulated_summaries = []
-    for chunk in tqdm(text_chunks):
+    for chunk in text_chunks:
         if summarize_recursively and accumulated_summaries:
             accumulated_summaries_string = "\n\n".join(accumulated_summaries)
             user_message_content = f"Previous summaries:\n\n{accumulated_summaries_string}\n\nText to summarize next:\n\n{chunk}"

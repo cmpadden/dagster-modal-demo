@@ -202,26 +202,28 @@ def transcribe_segment(
     },
 )
 def transcribe_episode(
-    audio_filepath: pathlib.Path,
+    audio_file: pathlib.Path,
     result_path: pathlib.Path,
     model: config.ModelSpec,
     force: bool = False,
 ):
+    if not audio_file.exists():
+        raise Exception("Audio file not present on the file system")
+
     if os.path.exists(result_path) and not force:
         logger.info("Transcript already exists, skipping...")
         return
 
-    segment_gen = split_silences(str(audio_filepath))
+    segment_gen = split_silences(str(audio_file))
 
     output_text = ""
     output_segments = []
     for result in transcribe_segment.starmap(
-        segment_gen, kwargs=dict(audio_filepath=audio_filepath, model=model)
+        segment_gen, kwargs=dict(audio_filepath=audio_file, model=model)
     ):
         output_text += result["text"]
         output_segments += result["segments"]
 
-    # TODO - emit metadata
     result = {
         "text": output_text,
         "segments": output_segments,
@@ -246,10 +248,12 @@ def main():
         if not audio_file:
             raise Exception("Missing `audio_file_path` extras parameter")
 
-        audio_file = "/mount/dagster-modal-demo/" + audio_file
+        audio_file = "/mount/" + audio_file
         result = audio_file.replace(".mp3", ".txt")
         transcribe_episode.remote(
-            audio_filepath=Path(audio_file),
+            audio_file=Path(audio_file),
             result_path=Path(result),
             model=model,
         )
+
+        # TODO - emit metadata

@@ -8,6 +8,8 @@ setup(
         "dagster-aws",
         "dagster-cloud",
         "feedparser",
+        "openai",
+        "tiktoken",
     ],
     extras_require={"dev": ["dagster-webserver", "pytest", "ruff"]},
 )
