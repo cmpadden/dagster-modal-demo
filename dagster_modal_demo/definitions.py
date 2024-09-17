@@ -206,8 +206,6 @@ def rss_pipeline_factory(feed_definition: RSSFeedDefinition) -> dg.Definitions:
         ):
             return dg.MaterializeResult(metadata={"status": "cached"})
 
-        # TODO - skip transcription if exists
-
         vars = [
             "CLOUDFLARE_R2_API",
             "CLOUDFLARE_R2_ACCESS_KEY_ID",
