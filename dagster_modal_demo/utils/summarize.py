@@ -11,16 +11,13 @@ summarizing movie subtitles:
 
 """
 
-import os
 from typing import List, Optional, Tuple
 
 import tiktoken
-from openai import OpenAI
-
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+from openai import Client
 
 
-def get_chat_completion(messages, model="gpt-4-turbo"):
+def get_chat_completion(client, messages, model="gpt-4-turbo"):
     response = client.chat.completions.create(
         model=model,
         messages=messages,
@@ -89,6 +86,7 @@ def combine_chunks_with_no_minimum(
 
 
 def summarize(
+    client: Client,
     text: str,
     detail: float = 0,
     model: str = "gpt-4-turbo",
@@ -146,7 +144,7 @@ def summarize(
             {"role": "user", "content": user_message_content},
         ]
 
-        response = get_chat_completion(messages, model=model)
+        response = get_chat_completion(client, messages, model=model)
         accumulated_summaries.append(response)
 
     final_summary = "\n\n".join(accumulated_summaries)

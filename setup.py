@@ -7,6 +7,7 @@ setup(
         "dagster",
         "dagster-aws",
         "dagster-cloud",
+        "dagster-openai",
         "feedparser",
         "openai",
         "tiktoken",

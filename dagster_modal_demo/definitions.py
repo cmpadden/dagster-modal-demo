@@ -11,6 +11,7 @@ import feedparser
 import yagmail
 from botocore.exceptions import ClientError
 from dagster_aws.s3 import S3Resource
+from dagster_openai import OpenAIResource
 
 from dagster_modal_demo.dagster_modal.resources import ModalClient
 from dagster_modal_demo.utils.summarize import summarize
@@ -192,10 +193,18 @@ def rss_pipeline_factory(feed_definition: RSSFeedDefinition) -> dg.Definitions:
         deps=[_podcast_audio],
         compute_kind="modal",
     )
-    def _podcast_transcription(context: dg.AssetExecutionContext, modal: ModalClient):
+    def _podcast_transcription(
+        context: dg.AssetExecutionContext, modal: ModalClient, s3: S3Resource
+    ) -> dg.MaterializeResult:
         """Podcast transcription using OpenAI's Whipser model on Modal."""
         context.log.info("transcript %s", context.partition_key)
-        audio_object_key = _destination(context.partition_key)
+        audio_key = _destination(context.partition_key)
+        transcription_key = audio_key.replace(".mp3", ".json")
+
+        if _object_exists(
+            s3.get_client(), bucket=R2_BUCKET_NAME, key=transcription_key
+        ):
+            return dg.MaterializeResult(metadata={"status": "cached"})
 
         # TODO - skip transcription if exists
 
@@ -210,7 +219,7 @@ def rss_pipeline_factory(feed_definition: RSSFeedDefinition) -> dg.Definitions:
             func_ref="modal_project.transcribe",
             context=context,
             env=env,
-            extras={"audio_file_path": audio_object_key},
+            extras={"audio_file_path": audio_key},
         ).get_materialize_result()
 
     @dg.asset(
@@ -220,11 +229,11 @@ def rss_pipeline_factory(feed_definition: RSSFeedDefinition) -> dg.Definitions:
         compute_kind="openai",
     )
     def _podcast_summary(
-        context: dg.AssetExecutionContext, s3: S3Resource
+        context: dg.AssetExecutionContext, s3: S3Resource, openai: OpenAIResource
     ) -> dg.MaterializeResult:
         audio_key = _destination(context.partition_key)
         transcription_key = audio_key.replace(".mp3", ".json")
-        summary_key = audio_key.replace(".mp3", "-summary.json")
+        summary_key = audio_key.replace(".mp3", "-summary.txt")
 
         if _object_exists(s3.get_client(), bucket=R2_BUCKET_NAME, key=summary_key):
             return dg.MaterializeResult(
@@ -237,9 +246,8 @@ def rss_pipeline_factory(feed_definition: RSSFeedDefinition) -> dg.Definitions:
 
         data = json.loads(response.get("Body").read())
 
-        # TODO - use `dagster-openai` client
-
-        summary = summarize(data.get("text"))
+        with openai.get_client(context) as client:
+            summary = summarize(client, data.get("text"))
 
         s3.get_client().put_object(
             Body=summary.encode("utf-8"), Bucket=R2_BUCKET_NAME, Key=summary_key
@@ -258,7 +266,7 @@ def rss_pipeline_factory(feed_definition: RSSFeedDefinition) -> dg.Definitions:
         context: dg.AssetExecutionContext, s3: S3Resource
     ) -> dg.MaterializeResult:
         audio_key = _destination(context.partition_key)
-        summary_key = audio_key.replace(".mp3", "-summary.json")
+        summary_key = audio_key.replace(".mp3", "-summary.txt")
 
         context.log.info("Reading summary %s", summary_key)
         response = s3.get_client().get_object(Bucket=R2_BUCKET_NAME, Key=summary_key)
@@ -358,6 +366,7 @@ def rss_pipeline_factory(feed_definition: RSSFeedDefinition) -> dg.Definitions:
         resources={
             "s3": s3_resource,
             "modal": ModalClient(project_directory=Path(__file__).parent.parent),
+            "openai": OpenAIResource(api_key=dg.EnvVar("OPENAI_API_KEY")),
         },
     )
 
