@@ -10,6 +10,7 @@ setup(
         "feedparser",
         "openai",
         "tiktoken",
+        "yagmail",
     ],
     extras_require={"dev": ["dagster-webserver", "pytest", "ruff"]},
 )

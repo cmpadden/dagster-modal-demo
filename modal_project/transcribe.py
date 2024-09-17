@@ -244,16 +244,21 @@ def main():
     with open_dagster_pipes():
         context = PipesContext.get()
 
-        audio_file = context.extras.get("audio_file_path")
-        if not audio_file:
+        audio_path = context.extras.get("audio_file_path")
+        if not audio_path:
             raise Exception("Missing `audio_file_path` extras parameter")
 
-        audio_file = "/mount/" + audio_file
-        result = audio_file.replace(".mp3", ".txt")
+        audio_path = "/mount/" + audio_path
+        transcription_path = audio_path.replace(".mp3", ".json")
         transcribe_episode.remote(
-            audio_file=Path(audio_file),
-            result_path=Path(result),
+            audio_file=Path(audio_path),
+            result_path=Path(transcription_path),
             model=model,
         )
 
-        # TODO - emit metadata
+        context.report_asset_materialization(
+            metadata={
+                "audio_file": audio_path,
+                "transcription_file": transcription_path,
+            }
+        )

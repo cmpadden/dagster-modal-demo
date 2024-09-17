@@ -1,3 +1,4 @@
+import json
 import os
 import re
 import urllib.request
@@ -7,10 +8,12 @@ from typing import Optional
 
 import dagster as dg
 import feedparser
+import yagmail
 from botocore.exceptions import ClientError
 from dagster_aws.s3 import S3Resource
 
 from dagster_modal_demo.dagster_modal.resources import ModalClient
+from dagster_modal_demo.utils.summarize import summarize
 
 BROWSER_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/89.0.4389.82 Safari/537.36"
 
@@ -140,7 +143,7 @@ R2_BUCKET_NAME = "dagster-modal-demo"
 class RSSFeedDefinition:
     name: str
     url: str
-    max_backfill_size: int = 3
+    max_backfill_size: int = 1
 
 
 def _destination(partition_key: str) -> str:
@@ -167,19 +170,17 @@ def rss_pipeline_factory(feed_definition: RSSFeedDefinition) -> dg.Definitions:
     ):
         """Podcast audio file download from RSS feed and uploaded to R2."""
         context.log.info("downloading audio file %s", config.audio_file_url)
-        audio_object_key = _destination(context.partition_key)
+        audio_key = _destination(context.partition_key)
 
         metadata = {}
 
-        if _object_exists(s3.get_client(), bucket=R2_BUCKET_NAME, key=audio_object_key):
+        if _object_exists(s3.get_client(), bucket=R2_BUCKET_NAME, key=audio_key):
             context.log.info("audio file already exists... skipping")
             metadata["status"] = "cached"
-            metadata["key"] = audio_object_key
+            metadata["key"] = audio_key
         else:
             bytes = download_bytes(config.audio_file_url)
-            s3.get_client().put_object(
-                Body=bytes, Bucket=R2_BUCKET_NAME, Key=audio_object_key
-            )
+            s3.get_client().put_object(Body=bytes, Bucket=R2_BUCKET_NAME, Key=audio_key)
             metadata["status"] = "uploaded"
             metadata["size"] = file_size(len(bytes))
 
@@ -218,35 +219,81 @@ def rss_pipeline_factory(feed_definition: RSSFeedDefinition) -> dg.Definitions:
         deps=[_podcast_transcription],
         compute_kind="openai",
     )
-    def _podcast_summary(context: dg.AssetExecutionContext, s3: S3Resource):
+    def _podcast_summary(
+        context: dg.AssetExecutionContext, s3: S3Resource
+    ) -> dg.MaterializeResult:
         audio_key = _destination(context.partition_key)
-        transcription_key = audio_key.replace(".mp3", ".txt")
+        transcription_key = audio_key.replace(".mp3", ".json")
+        summary_key = audio_key.replace(".mp3", "-summary.json")
 
-        context.log.info(transcription_key)
+        if _object_exists(s3.get_client(), bucket=R2_BUCKET_NAME, key=summary_key):
+            return dg.MaterializeResult(
+                metadata={"summary": "cached", "summary_key": summary_key}
+            )
 
         response = s3.get_client().get_object(
             Bucket=R2_BUCKET_NAME, Key=transcription_key
         )
 
-        import json
-
-        from dagster_modal_demo.utils.summarize import summarize
-
         data = json.loads(response.get("Body").read())
 
-        metadata = {}
+        # TODO - use `dagster-openai` client
 
-        metadata["summary"] = summarize(data.get("text"))
-        return dg.MaterializeResult(metadata=metadata)
+        summary = summarize(data.get("text"))
 
-        # TODO - upload / e-mail
+        s3.get_client().put_object(
+            Body=summary.encode("utf-8"), Bucket=R2_BUCKET_NAME, Key=summary_key
+        )
+        return dg.MaterializeResult(
+            metadata={"summary": summary, "summary_key": summary_key}
+        )
 
+    @dg.asset(
+        name=f"{feed_definition.name}_email",
+        partitions_def=rss_entry_partition,
+        deps=[_podcast_summary],
+        compute_kind="python",
+    )
+    def _podcast_email(
+        context: dg.AssetExecutionContext, s3: S3Resource
+    ) -> dg.MaterializeResult:
+        audio_key = _destination(context.partition_key)
+        summary_key = audio_key.replace(".mp3", "-summary.json")
+
+        context.log.info("Reading summary %s", summary_key)
+        response = s3.get_client().get_object(Bucket=R2_BUCKET_NAME, Key=summary_key)
+        summary = response.get("Body").read().decode("utf-8")
+
+        # Expects an application password (see: https://myaccount.google.com/apppasswords)
+        yag = yagmail.SMTP(
+            os.environ.get("GMAIL_USER"), os.environ.get("GMAIL_APP_PASSWORD")
+        )
+
+        recipient = os.environ.get("SUMMARY_RECIPIENT_EMAIL")
+
+        yag.send(
+            to=recipient,
+            subject=f"Podcast Summary: {context.partition_key}",
+            contents=f"""
+               <h1>Podcaset Summary</h1>
+               <h2>{context.partition_key}</h2>
+               <div>{summary}</div>
+            """,
+        )
+
+        return dg.MaterializeResult(
+            metadata={
+                "summary": summary,
+                "summary_key": summary_key,
+                "recipient": recipient,
+            }
+        )
 
     job_name = f"{feed_definition.name}_job"
     _job = dg.define_asset_job(
         name=job_name,
         selection=dg.AssetSelection.assets(
-            _podcast_audio, _podcast_transcription, _podcast_summary
+            _podcast_audio, _podcast_transcription, _podcast_summary, _podcast_email
         ),
         partitions_def=rss_entry_partition,
     )
@@ -300,7 +347,12 @@ def rss_pipeline_factory(feed_definition: RSSFeedDefinition) -> dg.Definitions:
         )
 
     return dg.Definitions(
-        assets=[_podcast_audio, _podcast_transcription, _podcast_summary],
+        assets=[
+            _podcast_audio,
+            _podcast_transcription,
+            _podcast_summary,
+            _podcast_email,
+        ],
         jobs=[_job],
         sensors=[_sensor],
         resources={
