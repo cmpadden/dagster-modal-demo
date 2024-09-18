@@ -121,13 +121,6 @@ def _extract_audio_url(entry) -> str:
 DEFAULT_POLLING_INTERVAL = 10 * 60  # 10 minutes
 DATA_PATH = "data"
 
-s3_resource = S3Resource(
-    endpoint_url=dg.EnvVar("CLOUDFLARE_R2_API"),
-    aws_access_key_id=dg.EnvVar("CLOUDFLARE_R2_ACCESS_KEY_ID"),
-    aws_secret_access_key=dg.EnvVar("CLOUDFLARE_R2_SECRET_ACCESS_KEY"),
-    region_name="auto",
-)
-
 
 def _object_exists(s3, bucket: str, key: str):
     try:
@@ -361,11 +354,6 @@ def rss_pipeline_factory(feed_definition: RSSFeedDefinition) -> dg.Definitions:
         ],
         jobs=[_job],
         sensors=[_sensor],
-        resources={
-            "s3": s3_resource,
-            "modal": ModalClient(project_directory=Path(__file__).parent.parent),
-            "openai": OpenAIResource(api_key=dg.EnvVar("OPENAI_API_KEY")),
-        },
     )
 
 
@@ -373,9 +361,28 @@ feeds = [
     RSSFeedDefinition(
         name="practical_ai",
         url="https://changelog.com/practicalai/feed",
-    )
+    ),
+    RSSFeedDefinition(
+        name="comedy_bang_bang",
+        url="https://feeds.simplecast.com/byb4nhvN",
+    ),
+    RSSFeedDefinition(
+        name="talk_tuah",
+        url="https://feeds.simplecast.com/lHFdU_33",
+    ),
 ]
 
 pipeline_definitions = [rss_pipeline_factory(feed) for feed in feeds]
 
-defs = dg.Definitions.merge(*pipeline_definitions)
+resources = {
+    "s3": S3Resource(
+        endpoint_url=dg.EnvVar("CLOUDFLARE_R2_API"),
+        aws_access_key_id=dg.EnvVar("CLOUDFLARE_R2_ACCESS_KEY_ID"),
+        aws_secret_access_key=dg.EnvVar("CLOUDFLARE_R2_SECRET_ACCESS_KEY"),
+        region_name="auto",
+    ),
+    "modal": ModalClient(project_directory=Path(__file__).parent.parent),
+    "openai": OpenAIResource(api_key=dg.EnvVar("OPENAI_API_KEY")),
+}
+
+defs = dg.Definitions.merge(*pipeline_definitions, dg.Definitions(resources=resources))

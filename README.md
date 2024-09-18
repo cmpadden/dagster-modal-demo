@@ -1,4 +1,4 @@
-# Dagster × Modal Demo
+## Dagster × Modal Demo
 
 ![Dagster Modal Banner](_static/dagster-modal-banner.png)
 
@@ -9,7 +9,14 @@ published podcasts, transcribes them using the power of GPUs, and notifies you w
 that you can focus on the things that truly matter (not listening to people talk into fancy
 microphones).
 
+### Architecture
+
 ![Architecture Diagram](_static/architecture-diagram.png)
+
+
+### Example Asset Lineage
+
+![Screenshot Dagster Lineage](_static/screenshot_dagster_lineage.png)
 
 ## Getting started
 
@@ -48,19 +55,12 @@ OpenAI
 Miscellaneous
 - [`yagmail` for Sending Email from Python](https://github.com/kootenpv/yagmail)
 
-## Screenshots
+## More Screenshots
 
 <details>
 <summary>Screenshot of R2 Storage</summary>
 
 ![Screenshot R2 Storage](_static/screenshot_r2_storage.png)
-
-</details>
-
-<details>
-<summary>Screenshot of Dagster Lineage</summary>
-
-![Screenshot Dagster Lineage](_static/screenshot_dagster_lineage.png)
 
 </details>
 
