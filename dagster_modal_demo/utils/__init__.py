@@ -88,7 +88,7 @@ def file_size(len_bytes, suffix="B") -> str:
     return "%.1f%s%s" % (len_bytes, "Yi", suffix)
 
 
-def _extract_audio_url(entry) -> str:
+def get_entry_audio_url(entry) -> str:
     """Extracts URL of audio file from RSS entry.
 
     Args:
@@ -107,7 +107,18 @@ def _extract_audio_url(entry) -> str:
         raise Exception("No audio file present")
 
 
-def _object_exists(s3, bucket: str, key: str):
+def object_exists(s3, bucket: str, key: str):
+    """Determines if an object exists in S3/R2.
+
+    Args:
+        s3 (S3Client): client for s3 / r2
+        bucket (str): target bucket
+        key (str): target object key
+
+    Returns:
+        True if object exists
+
+    """
     try:
         s3.head_object(Bucket=bucket, Key=key)
         return True
@@ -115,5 +126,11 @@ def _object_exists(s3, bucket: str, key: str):
         return False
 
 
-def _destination(partition_key: str) -> str:
+def get_destination(partition_key: str) -> str:
+    """Gets the object key for the resulting MP3 file for a given `partition_key`.
+
+    Args:
+        partition_key (str): partition key of podcast entry
+
+    """
     return DATA_PATH + os.sep + partition_key + ".mp3"

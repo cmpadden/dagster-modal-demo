@@ -14,11 +14,11 @@ from dagster_modal_demo.constants import (
 )
 from dagster_modal_demo.dagster_modal.resources import ModalClient
 from dagster_modal_demo.utils import (
-    _destination,
-    _extract_audio_url,
-    _object_exists,
     download_bytes,
     file_size,
+    get_destination,
+    get_entry_audio_url,
+    object_exists,
     sanitize,
 )
 from dagster_modal_demo.utils.summarize import summarize
@@ -51,11 +51,11 @@ def rss_pipeline_factory(feed_definition: RSSFeedDefinition) -> dg.Definitions:
     ):
         """Podcast audio file download from RSS feed and uploaded to R2."""
         context.log.info("downloading audio file %s", config.audio_file_url)
-        audio_key = _destination(context.partition_key)
+        audio_key = get_destination(context.partition_key)
 
         metadata = {}
 
-        if _object_exists(s3.get_client(), bucket=R2_BUCKET_NAME, key=audio_key):
+        if object_exists(s3.get_client(), bucket=R2_BUCKET_NAME, key=audio_key):
             context.log.info("audio file already exists... skipping")
             metadata["status"] = "cached"
             metadata["key"] = audio_key
@@ -78,10 +78,10 @@ def rss_pipeline_factory(feed_definition: RSSFeedDefinition) -> dg.Definitions:
     ) -> dg.MaterializeResult:
         """Podcast transcription using OpenAI's Whipser model on Modal."""
         context.log.info("transcript %s", context.partition_key)
-        audio_key = _destination(context.partition_key)
+        audio_key = get_destination(context.partition_key)
         transcription_key = audio_key.replace(".mp3", ".json")
 
-        if _object_exists(
+        if object_exists(
             s3.get_client(), bucket=R2_BUCKET_NAME, key=transcription_key
         ):
             return dg.MaterializeResult(metadata={"status": "cached"})
@@ -109,11 +109,11 @@ def rss_pipeline_factory(feed_definition: RSSFeedDefinition) -> dg.Definitions:
     def _podcast_summary(
         context: dg.AssetExecutionContext, s3: S3Resource, openai: OpenAIResource
     ) -> dg.MaterializeResult:
-        audio_key = _destination(context.partition_key)
+        audio_key = get_destination(context.partition_key)
         transcription_key = audio_key.replace(".mp3", ".json")
         summary_key = audio_key.replace(".mp3", "-summary.txt")
 
-        if _object_exists(s3.get_client(), bucket=R2_BUCKET_NAME, key=summary_key):
+        if object_exists(s3.get_client(), bucket=R2_BUCKET_NAME, key=summary_key):
             return dg.MaterializeResult(
                 metadata={"summary": "cached", "summary_key": summary_key}
             )
@@ -143,7 +143,7 @@ def rss_pipeline_factory(feed_definition: RSSFeedDefinition) -> dg.Definitions:
     def _podcast_email(
         context: dg.AssetExecutionContext, s3: S3Resource
     ) -> dg.MaterializeResult:
-        audio_key = _destination(context.partition_key)
+        audio_key = get_destination(context.partition_key)
         summary_key = audio_key.replace(".mp3", "-summary.txt")
 
         context.log.info("Reading summary %s", summary_key)
@@ -207,7 +207,7 @@ def rss_pipeline_factory(feed_definition: RSSFeedDefinition) -> dg.Definitions:
             entries = feed.entries
 
         partition_key_audio_files = [
-            (sanitize(entry.id), _extract_audio_url(entry)) for entry in entries
+            (sanitize(entry.id), get_entry_audio_url(entry)) for entry in entries
         ]
 
         return dg.SensorResult(
