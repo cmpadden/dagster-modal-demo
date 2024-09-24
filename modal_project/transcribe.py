@@ -237,12 +237,11 @@ def transcribe_episode(
 
 @app.local_entrypoint()
 def main():
-    from dagster_pipes import PipesContext, open_dagster_pipes
+    from dagster_pipes import open_dagster_pipes
 
     model = config.DEFAULT_MODEL
 
-    with open_dagster_pipes():
-        context = PipesContext.get()
+    with open_dagster_pipes() as context:
 
         audio_path = context.extras.get("audio_file_path")
         if not audio_path:

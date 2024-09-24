@@ -28,7 +28,7 @@ class ModalClient(PipesSubprocessClient):
         extras: Optional[PipesExtras] = None,
         env: Optional[Mapping[str, str]] = None,
     ) -> PipesClientCompletedInvocation:
-        command = ["modal", "run", app_ref]
+        command = ["modal", "deploy", app_ref]
 
         if name:
             command += ["--name", name]
