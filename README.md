@@ -1,3 +1,8 @@
+> [!NOTE]
+> This project has been moved to the Dagster monorepo. The updated version can be found [here](https://github.com/dagster-io/dagster/tree/02d2f31346e2bfe4f09b43c944b1dfcb287b569e/examples/project_dagster_modal_pipes).
+
+---
+
 ## Dagster × Modal Demo
 
 ![Dagster Modal Banner](_static/dagster-modal-banner.png)
